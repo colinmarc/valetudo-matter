@@ -1,0 +1,170 @@
+use anyhow::{Context as _, bail};
+use enumset::EnumSet;
+use log::{debug, error};
+use rs_matter::utils::rand::sys_rand;
+use smol::stream::StreamExt;
+
+mod capabilities;
+mod state;
+
+pub(crate) use capabilities::*;
+pub(crate) use state::*;
+
+use crate::{handlers::VersionedCell, http::ValetudoClient};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct DeviceState {
+    pub(crate) value: StatusValue,
+    pub(crate) flag: StatusFlag,
+}
+
+impl Default for DeviceState {
+    fn default() -> Self {
+        Self {
+            value: StatusValue::Idle,
+            flag: StatusFlag::None,
+        }
+    }
+}
+
+pub(crate) struct Device {
+    pub(crate) client: ValetudoClient,
+    pub(crate) capabilities: EnumSet<Capability>,
+    pub(crate) cleaning_presets: Option<EnumSet<Preset>>,
+    pub(crate) current_state: VersionedCell<DeviceState>,
+    pub(crate) identify_time: VersionedCell<u16>,
+}
+
+impl Device {
+    pub(crate) async fn init(client: ValetudoClient) -> anyhow::Result<Self> {
+        debug!("fetching capabilities");
+        let capabilities: EnumSet<Capability> = client
+            .get("/api/v2/robot/capabilities")
+            .await
+            .context("Failed to fetch capabilities")?;
+
+        debug!("capabilities: {capabilities:?}");
+        if !capabilities.contains(Capability::BasicControlCapability) {
+            bail!("Device requires at least BasicControlCapability");
+        }
+
+        let cleaning_presets = if capabilities.contains(Capability::OperationModeControlCapability)
+        {
+            debug!("fetching presets");
+            let presets = client
+                .get("/api/v2/robot/capabilities/OperationModeControlCapability/presets")
+                .await
+                .context("Failed to fetch cleaning mode presets")?;
+
+            debug!("available presets: {presets:?}");
+            Some(presets)
+        } else {
+            None
+        };
+
+        debug!("fetching status");
+        let attributes: Vec<state::StateAttribute> = client
+            .get("/api/v2/robot/state/attributes")
+            .await
+            .context("Failed to fetch initial status")?;
+        let Some(state::StateAttribute::StatusStateAttribute { value, flag }) = attributes
+            .into_iter()
+            .find(|attr| matches!(attr, state::StateAttribute::StatusStateAttribute { .. }))
+        else {
+            bail!("No status attribute in api response");
+        };
+
+        debug!("current state: {value:?}/{flag:?}");
+        let current_state = VersionedCell::new(DeviceState { value, flag }, sys_rand);
+
+        Ok(Self {
+            client: client.clone(),
+            capabilities,
+            cleaning_presets: cleaning_presets,
+            current_state,
+            identify_time: VersionedCell::new(0, sys_rand),
+        })
+    }
+
+    /// A background worker updating the device state in response to SSE events.
+    pub(crate) async fn monitor_status(&self, client: ValetudoClient) {
+        loop {
+            match self
+                .monitor_status_once(&client)
+                .await
+                .context("Stream error")
+            {
+                Ok(_) => debug!("GET /api/v2/robot/state/attributes/sse: stream exited"),
+                Err(e) => error!("GET /api/v2/robot/state/attributes/sse: {e:#}"),
+            }
+        }
+    }
+
+    async fn monitor_status_once(&self, client: &ValetudoClient) -> anyhow::Result<()> {
+        let mut stream = client.sse("/api/v2/robot/state/attributes/sse").await?;
+        while let Some(s) = stream.next().await {
+            let ev: Vec<state::StateAttribute> =
+                serde_json::from_str(&s?).context("Invalid event")?;
+            let Some(state::StateAttribute::StatusStateAttribute { value, flag }) = ev
+                .into_iter()
+                .find(|attr| matches!(attr, state::StateAttribute::StatusStateAttribute { .. }))
+            else {
+                bail!("Invalid event");
+            };
+
+            self.current_state.set(DeviceState { value, flag });
+        }
+
+        Ok(())
+    }
+
+    pub(crate) async fn start_cleaning(&self) -> anyhow::Result<()> {
+        self.client
+            .put(
+                "/api/v2/robot/capabilities/BasicControlCapability",
+                r#"{"action": "start"}"#.to_owned(),
+            )
+            .await
+    }
+
+    pub(crate) async fn start_mapping_pass(&self) -> anyhow::Result<()> {
+        todo!()
+    }
+
+    pub(crate) async fn pause(&self) -> anyhow::Result<()> {
+        self.client
+            .put(
+                "/api/v2/robot/capabilities/BasicControlCapability",
+                r#"{"action": "start"}"#.to_owned(),
+            )
+            .await
+    }
+
+    pub(crate) async fn resume(&self) -> anyhow::Result<()> {
+        // todo
+        self.client
+            .put(
+                "/api/v2/robot/capabilities/BasicControlCapability",
+                r#"{"action": "start"}"#.to_owned(),
+            )
+            .await
+    }
+
+    pub(crate) async fn go_home(&self) -> anyhow::Result<()> {
+        self.client
+            .put(
+                "/api/v2/robot/capabilities/BasicControlCapability",
+                r#"{"action": "home"}"#.to_owned(),
+            )
+            .await
+    }
+
+    pub(crate) async fn stop(&self) -> Result<(), anyhow::Error> {
+        self.client
+            .put(
+                "/api/v2/robot/capabilities/BasicControlCapability",
+                r#"{"action": "stop"}"#.to_owned(),
+            )
+            .await
+    }
+}
