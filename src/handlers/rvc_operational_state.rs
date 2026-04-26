@@ -6,9 +6,10 @@ use rs_matter::{
     tlv::{Nullable, NullableBuilder, TLVBuilderParent, Utf8StrArrayBuilder, Utf8StrBuilder},
 };
 
+use rs_matter::dm::clusters::decl::{self as decl, rvc_operational_state};
+
 use crate::{
     device::{self, Device},
-    generated::rvc_operational_state,
     handlers::to_matter_err,
 };
 
@@ -73,8 +74,8 @@ impl rvc_operational_state::ClusterAsyncHandler for Device {
         &self,
         _ctx: impl rs_matter::dm::ReadContext,
         builder: rs_matter::dm::ArrayAttributeRead<
-            rvc_operational_state::OperationalStateStructArrayBuilder<P>,
-            rvc_operational_state::OperationalStateStructBuilder<P>,
+            decl::globals::OperationalStateStructArrayBuilder<P>,
+            decl::globals::OperationalStateStructBuilder<P>,
         >,
     ) -> Result<P, rs_matter::error::Error> {
         match builder {
@@ -107,7 +108,7 @@ impl rvc_operational_state::ClusterAsyncHandler for Device {
     async fn operational_error<P: rs_matter::tlv::TLVBuilderParent>(
         &self,
         _ctx: impl rs_matter::dm::ReadContext,
-        builder: rvc_operational_state::ErrorStateStructBuilder<P>,
+        builder: decl::globals::ErrorStateStructBuilder<P>,
     ) -> Result<P, rs_matter::error::Error> {
         // todo
         build_ok(builder)
@@ -142,7 +143,7 @@ impl rvc_operational_state::ClusterAsyncHandler for Device {
 }
 
 fn build_state<P: TLVBuilderParent>(
-    builder: rvc_operational_state::OperationalStateStructBuilder<P>,
+    builder: decl::globals::OperationalStateStructBuilder<P>,
     state: OperationalState,
 ) -> Result<P, Error> {
     // Unclear why Error and Running aren't generating as part of the enum.
@@ -167,7 +168,7 @@ fn build_state<P: TLVBuilderParent>(
 }
 
 fn build_ok<P: TLVBuilderParent>(
-    builder: rvc_operational_state::ErrorStateStructBuilder<P>,
+    builder: decl::globals::ErrorStateStructBuilder<P>,
 ) -> Result<P, Error> {
     builder
         .error_state_id(0x0)?

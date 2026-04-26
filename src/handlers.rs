@@ -24,10 +24,10 @@ mod rvc_run_mode;
 
 use std::cell::Cell;
 
+use rand::RngCore;
 use rs_matter::{
-    dm::{Context, Dataver},
+    dm::{Dataver, OperationContext},
     error::{Error, ErrorCode::Failure},
-    utils::rand::Rand,
 };
 
 pub(crate) struct VersionedCell<T: Copy + PartialEq> {
@@ -36,7 +36,7 @@ pub(crate) struct VersionedCell<T: Copy + PartialEq> {
 }
 
 impl<T: Copy + PartialEq> VersionedCell<T> {
-    pub(crate) fn new(inner: T, rand: Rand) -> Self {
+    pub(crate) fn new(inner: T, rand: &mut impl RngCore) -> Self {
         Self {
             inner: Cell::new(inner),
             dataver: Dataver::new_rand(rand),
@@ -62,11 +62,11 @@ impl<T: Copy + PartialEq> VersionedCell<T> {
         }
     }
 
-    pub(crate) fn set_notify(&self, value: T, ctx: impl Context) {
+    pub(crate) fn set_notify(&self, value: T, ctx: &impl OperationContext) {
         let old_value = self.inner.replace(value);
         if value != old_value {
             self.dataver.changed();
-            ctx.notify_changed();
+            ctx.notify_own_cluster_changed();
         }
     }
 
@@ -79,11 +79,11 @@ impl<T: Copy + PartialEq> VersionedCell<T> {
         old_value
     }
 
-    pub(crate) fn replace_notify(&self, value: T, ctx: impl Context) -> T {
+    pub(crate) fn replace_notify(&self, value: T, ctx: &impl OperationContext) -> T {
         let old_value = self.replace(value);
         if old_value != value {
             self.dataver.changed();
-            ctx.notify_changed();
+            ctx.notify_own_cluster_changed();
         }
 
         old_value

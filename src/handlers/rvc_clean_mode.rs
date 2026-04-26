@@ -1,4 +1,6 @@
-use crate::{device::Device, generated::rvc_clean_mode};
+use rs_matter::dm::clusters::decl::{self as decl, rvc_clean_mode};
+
+use crate::device::Device;
 
 impl rvc_clean_mode::ClusterAsyncHandler for Device {
     const CLUSTER: rs_matter::dm::Cluster<'static> = rvc_clean_mode::FULL_CLUSTER
@@ -18,8 +20,8 @@ impl rvc_clean_mode::ClusterAsyncHandler for Device {
         &self,
         _ctx: impl rs_matter::dm::ReadContext,
         _builder: rs_matter::dm::ArrayAttributeRead<
-            rvc_clean_mode::ModeOptionStructArrayBuilder<P>,
-            rvc_clean_mode::ModeOptionStructBuilder<P>,
+            decl::globals::ModeOptionStructArrayBuilder<P>,
+            decl::globals::ModeOptionStructBuilder<P>,
         >,
     ) -> Result<P, rs_matter::error::Error> {
         todo!()

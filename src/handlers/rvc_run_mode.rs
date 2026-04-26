@@ -6,9 +6,10 @@ use rs_matter::{
     tlv::TLVBuilderParent,
 };
 
+use rs_matter::dm::clusters::decl::{self as decl, rvc_run_mode};
+
 use crate::{
     device::{Capability, Device, DeviceState, StatusFlag, StatusValue},
-    generated::rvc_run_mode,
     handlers::to_matter_err,
 };
 
@@ -66,8 +67,8 @@ impl rvc_run_mode::ClusterAsyncHandler for Device {
         &self,
         _ctx: impl rs_matter::dm::ReadContext,
         builder: ArrayAttributeRead<
-            rvc_run_mode::ModeOptionStructArrayBuilder<P>,
-            rvc_run_mode::ModeOptionStructBuilder<P>,
+            decl::globals::ModeOptionStructArrayBuilder<P>,
+            decl::globals::ModeOptionStructBuilder<P>,
         >,
     ) -> Result<P, rs_matter::error::Error> {
         match builder {
@@ -123,7 +124,7 @@ impl rvc_run_mode::ClusterAsyncHandler for Device {
 }
 
 fn build_mode<P: TLVBuilderParent>(
-    builder: rvc_run_mode::ModeOptionStructBuilder<P>,
+    builder: decl::globals::ModeOptionStructBuilder<P>,
     mode: RunMode,
 ) -> Result<P, Error> {
     let (label, tag) = match mode {

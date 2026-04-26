@@ -3,7 +3,7 @@ use std::time;
 use anyhow::{Context as _, bail};
 use enumset::EnumSet;
 use log::{debug, error};
-use rs_matter::utils::rand::sys_rand;
+use rand::thread_rng;
 use smol::{Timer, stream::StreamExt};
 
 mod capabilities;
@@ -77,14 +77,14 @@ impl Device {
         };
 
         debug!("current state: {value:?}/{flag:?}");
-        let current_state = VersionedCell::new(DeviceState { value, flag }, sys_rand);
+        let current_state = VersionedCell::new(DeviceState { value, flag }, &mut thread_rng());
 
         Ok(Self {
             client: client.clone(),
             capabilities,
             cleaning_presets,
             current_state,
-            identify_time: VersionedCell::new(0, sys_rand),
+            identify_time: VersionedCell::new(0, &mut thread_rng()),
         })
     }
 

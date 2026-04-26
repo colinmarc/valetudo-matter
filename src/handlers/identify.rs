@@ -1,10 +1,15 @@
 use log::{info, warn};
 use rs_matter::{
-    dm::Context,
+    dm::OperationContext,
     error::{Error, ErrorCode},
 };
 
-use crate::{device::Capability, device::Device, generated::identify, handlers::to_matter_err};
+use crate::{
+    device::Capability,
+    device::Device,
+    generated::identify,
+    handlers::to_matter_err,
+};
 
 // pub(crate) struct IdentifyHandler<'a> {
 //     device: &'a Device,
@@ -13,8 +18,8 @@ use crate::{device::Capability, device::Device, generated::identify, handlers::t
 // }
 
 impl Device {
-    async fn identify_robot(&self, ctx: impl Context, dur: u16) -> Result<(), Error> {
-        let old_value = self.identify_time.replace_notify(dur, &ctx);
+    async fn identify_robot(&self, ctx: &impl OperationContext, dur: u16) -> Result<(), Error> {
+        let old_value = self.identify_time.replace_notify(dur, ctx);
 
         if dur == 0 || old_value != 0 {
             return Ok(());
@@ -37,7 +42,7 @@ impl Device {
             Ok(())
         };
 
-        self.identify_time.set_notify(0, ctx);
+        self.identify_time.set_notify(0, &ctx);
         res
     }
 }
@@ -74,7 +79,7 @@ impl identify::ClusterAsyncHandler for Device {
         ctx: impl rs_matter::dm::WriteContext,
         value: u16,
     ) -> Result<(), rs_matter::error::Error> {
-        self.identify_robot(ctx, value).await
+        self.identify_robot(&ctx, value).await
     }
 
     async fn handle_identify(
@@ -82,7 +87,7 @@ impl identify::ClusterAsyncHandler for Device {
         ctx: impl rs_matter::dm::InvokeContext,
         request: identify::IdentifyRequest<'_>,
     ) -> Result<(), rs_matter::error::Error> {
-        self.identify_robot(ctx, request.identify_time()?).await
+        self.identify_robot(&ctx, request.identify_time()?).await
     }
 
     async fn handle_trigger_effect(

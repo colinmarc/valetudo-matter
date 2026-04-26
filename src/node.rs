@@ -4,63 +4,77 @@ use std::{net::UdpSocket, path::Path};
 
 use anyhow::Context;
 use log::debug;
+use rand::RngCore;
 use rs_matter::{
     MATTER_PORT, Matter, clusters, devices,
+    crypto::{Crypto, default_crypto},
     dm::{
         Async, AsyncHandler, AsyncMetadata, Cluster, DataModel, Dataver, DeviceType, EmptyHandler,
-        Endpoint, EpClMatcher, Node,
+        Endpoint, EpClMatcher, IMBuffer, Node,
         clusters::{
             desc::{self, ClusterHandler as _},
-            net_comm::NetworkType,
+            net_comm::SharedNetworks,
         },
-        devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET},
+        devices::test::{DAC_PRIVKEY, TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET},
         endpoints,
+        events::NoEvents,
+        networks::{SysNetifs, eth::EthNetwork},
         subscriptions::Subscriptions,
     },
     pairing::{DiscoveryCapabilities, qr::QrTextType},
-    persist::{NO_NETWORKS, Psm},
+    persist::{DirKvBlobStore, SharedKvBlobStore},
     respond::DefaultResponder,
-    sc::pake::MAX_COMM_WINDOW_TIMEOUT_SECS,
+    root_endpoint,
+    sc::pase::MAX_COMM_WINDOW_TIMEOUT_SECS,
     transport::{
         MATTER_SOCKET_BIND_ADDR,
         network::mdns::builtin::{BuiltinMdnsResponder, Host},
     },
-    utils::{storage::pooled::PooledBuffers, sync::blocking::raw::StdRawMutex},
+    utils::storage::pooled::PooledBuffers,
 };
 use smol::future;
 
-use crate::{device::Device, net::Netif};
-use crate::{
-    generated::{identify, rvc_clean_mode, rvc_operational_state, rvc_run_mode},
-    net::GetifaddrsDiag,
+use crate::device::Device;
+use crate::generated::{
+    identify, rvc_clean_mode, rvc_operational_state, rvc_run_mode,
 };
+use crate::net::Netif;
 
-pub(crate) async fn run(device: &Device, persistence_dir: &Path) -> anyhow::Result<()> {
-    let matter = Matter::new(
+pub(crate) async fn run(
+    device: &Device,
+    persistence_dir: &Path,
+) -> anyhow::Result<()> {
+    let mut matter = Matter::new(
         &TEST_DEV_DET,
         TEST_DEV_COMM,
         &TEST_DEV_ATT,
         rs_matter::utils::epoch::sys_epoch,
-        rs_matter::utils::rand::sys_rand,
         MATTER_PORT,
     );
 
-    // Need to call this once
-    matter.initialize_transport_buffers()?;
-    let buffers = PooledBuffers::<10, StdRawMutex, _>::new(0);
+    let crypto = default_crypto(rand::thread_rng(), DAC_PRIVKEY);
+    let rng = crypto.rand()?;
 
+    // Persistence.
+    let mut kv_buf = [0u8; 4096];
+    let mut kv = DirKvBlobStore::new(persistence_dir.to_path_buf());
+    smol::block_on(matter.load_persist(&mut kv, &mut kv_buf))?;
+
+    let buffers = PooledBuffers::<10, IMBuffer>::new(0);
     let subscriptions = Subscriptions::<64>::new();
+    let events = NoEvents::new_default();
 
-    // Create the Data Model instance
     let dm = DataModel::new(
         &matter,
+        &crypto,
         &buffers,
         &subscriptions,
-        dm_handler(&matter, device),
+        &events,
+        dm_handler(rng, device),
+        SharedKvBlobStore::new(kv, kv_buf),
+        SharedNetworks::new(EthNetwork::new_default()),
     );
 
-    // Create a default responder capable of handling up to 3 subscriptions
-    // All other subscription requests will be turned down with "resource exhausted"
     let responder = DefaultResponder::new(&dm);
     debug!(
         "Responder memory: Responder (stack)={}B, Runner fut (stack)={}B",
@@ -68,11 +82,9 @@ pub(crate) async fn run(device: &Device, persistence_dir: &Path) -> anyhow::Resu
         core::mem::size_of_val(&responder.run::<4, 4>())
     );
 
-    // Run the responder with up to 4 handlers (i.e. 4 exchanges can be handled simultaneously)
-    // Clients trying to open more exchanges than the ones currently running will get "I'm busy, please try again later"
     let mut respond = pin!(responder.run::<4, 4>());
 
-    // Run the Matter and mDNS transports
+    // mDNS via the builtin responder (no Avahi dependency).
     let iface = Netif::pick()
         .await
         .context("Failed to find suitable network interface")?;
@@ -97,45 +109,40 @@ pub(crate) async fn run(device: &Device, persistence_dir: &Path) -> anyhow::Resu
         None
     };
 
-    let mdns = BuiltinMdnsResponder::new(&matter);
-    let mut mdns = pin!(mdns.run(&mdns_socket, &mdns_socket, &host, ipv4_iface, iface.index));
+    let mdns = BuiltinMdnsResponder::new(&matter, &crypto);
+    let mut mdns = pin!(mdns.run(
+        &mdns_socket, &mdns_socket, &host, ipv4_iface, iface.index,
+    ));
 
+    // Matter transport.
     let socket = smol::Async::<UdpSocket>::bind(MATTER_SOCKET_BIND_ADDR)?;
-    let mut transport = pin!(matter.run(&socket, &socket));
-
-    // Create, load and run the persister
-    let mut psm = Psm::<8192>::new();
-    debug!("using persistence at path: {}", persistence_dir.display());
-    psm.load(persistence_dir, &matter, NO_NETWORKS)?;
-
-    let mut psm = pin!(psm.run(persistence_dir, &matter, NO_NETWORKS));
+    let mut transport = pin!(matter.run(&crypto, &socket, &socket, &socket));
 
     if !matter.is_commissioned() {
-        // If the device is not commissioned yet, print the QR text and code to the console
-        // and enable basic commissioning.
         matter.print_standard_qr_text(DiscoveryCapabilities::IP)?;
         matter.print_standard_qr_code(QrTextType::Unicode, DiscoveryCapabilities::IP)?;
-
-        matter.open_basic_comm_window(MAX_COMM_WINDOW_TIMEOUT_SECS)?;
+        matter.open_basic_comm_window(
+            MAX_COMM_WINDOW_TIMEOUT_SECS,
+            &crypto,
+            dm.change_notify(),
+        )?;
     }
 
     let mut dm = pin!(dm.run());
-    let fut = try_zip5(&mut transport, &mut mdns, &mut psm, &mut respond, &mut dm);
+    let fut = try_zip4(&mut transport, &mut mdns, &mut respond, &mut dm);
     Ok(fut.await?)
 }
 
-async fn try_zip5<E>(
+async fn try_zip4<E>(
     f1: impl Future<Output = Result<(), E>>,
     f2: impl Future<Output = Result<(), E>>,
     f3: impl Future<Output = Result<(), E>>,
     f4: impl Future<Output = Result<(), E>>,
-    f5: impl Future<Output = Result<(), E>>,
 ) -> Result<(), E> {
     #[rustfmt::skip]
     future::try_zip(f1,
         future::try_zip(f2,
-            future::try_zip(f3,
-                future::try_zip(f4, f5))),
+            future::try_zip(f3, f4)),
     )
     .await?;
 
@@ -155,9 +162,8 @@ const OPERATIONAL_STATE_CLUSTER: Cluster<'static> =
     <Device as rvc_operational_state::ClusterAsyncHandler>::CLUSTER;
 
 const NODE: Node<'static> = Node {
-    id: 0,
     endpoints: &[
-        endpoints::root_endpoint(NetworkType::Ethernet),
+        root_endpoint!(geth),
         Endpoint {
             id: 1,
             device_types: devices!(DEV_TYPE_RVC),
@@ -173,40 +179,37 @@ const NODE: Node<'static> = Node {
 };
 
 fn dm_handler<'a>(
-    matter: &'a Matter<'a>,
+    mut rand: impl RngCore + Copy,
     device: &'a Device,
 ) -> impl AsyncMetadata + AsyncHandler + 'a {
     (
         NODE,
-        endpoints::with_eth(
+        endpoints::with_eth_sys(
+            &false,
             &(),
-            &GetifaddrsDiag,
-            matter.rand(),
-            endpoints::with_sys(
-                &true,
-                matter.rand(),
-                EmptyHandler
-                    .chain(
-                        EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
-                        Async(desc::DescHandler::new(Dataver::new_rand(matter.rand())).adapt()),
-                    )
-                    .chain(
-                        EpClMatcher::new(Some(1), Some(IDENTIFY_CLUSTER.id)),
-                        identify::HandlerAsyncAdaptor(device),
-                    )
-                    .chain(
-                        EpClMatcher::new(Some(1), Some(RUN_MODE_CLUSTER.id)),
-                        rvc_run_mode::HandlerAsyncAdaptor(device),
-                    )
-                    // .chain(
-                    //     EpClMatcher::new(Some(1), Some(CLEAN_MODE_CLUSTER.id)),
-                    //     rvc_clean_mode::HandlerAsyncAdaptor(&device),
-                    // )
-                    .chain(
-                        EpClMatcher::new(Some(1), Some(OPERATIONAL_STATE_CLUSTER.id)),
-                        rvc_operational_state::HandlerAsyncAdaptor(device),
-                    ),
-            ),
+            &SysNetifs,
+            rand,
+            EmptyHandler
+                .chain(
+                    EpClMatcher::new(Some(1), Some(desc::DescHandler::CLUSTER.id)),
+                    Async(desc::DescHandler::new(Dataver::new_rand(&mut rand)).adapt()),
+                )
+                .chain(
+                    EpClMatcher::new(Some(1), Some(IDENTIFY_CLUSTER.id)),
+                    identify::HandlerAsyncAdaptor(device),
+                )
+                .chain(
+                    EpClMatcher::new(Some(1), Some(RUN_MODE_CLUSTER.id)),
+                    rvc_run_mode::HandlerAsyncAdaptor(device),
+                )
+                // .chain(
+                //     EpClMatcher::new(Some(1), Some(CLEAN_MODE_CLUSTER.id)),
+                //     rvc_clean_mode::HandlerAsyncAdaptor(&device),
+                // )
+                .chain(
+                    EpClMatcher::new(Some(1), Some(OPERATIONAL_STATE_CLUSTER.id)),
+                    rvc_operational_state::HandlerAsyncAdaptor(device),
+                ),
         ),
     )
 }
