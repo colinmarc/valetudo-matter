@@ -1,5 +1,5 @@
 use enum_iterator::Sequence;
-use num_enum::{IntoPrimitive, TryFromPrimitive};
+
 use rs_matter::{
     dm::ArrayAttributeRead,
     error::{Error, ErrorCode},
@@ -13,14 +13,30 @@ use crate::{
     handlers::to_matter_err,
 };
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, TryFromPrimitive, IntoPrimitive, Sequence)]
-#[repr(u8)]
+use rvc_operational_state::OperationalStateEnum;
+
+// Wraps OperationalStateEnum to add conversions from Valetudo state.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Sequence)]
 enum OperationalState {
-    Error,
+    Stopped,
     Running,
     Paused,
-    Returning,
+    Error,
+    SeekingCharger,
     Docked,
+}
+
+impl From<OperationalState> for u8 {
+    fn from(state: OperationalState) -> u8 {
+        match state {
+            OperationalState::Stopped => OperationalStateEnum::Stopped as u8,
+            OperationalState::Running => OperationalStateEnum::Running as u8,
+            OperationalState::Paused => OperationalStateEnum::Paused as u8,
+            OperationalState::Error => OperationalStateEnum::VError as u8,
+            OperationalState::SeekingCharger => OperationalStateEnum::SeekingCharger as u8,
+            OperationalState::Docked => OperationalStateEnum::Docked as u8,
+        }
+    }
 }
 
 impl From<device::DeviceState> for OperationalState {
@@ -28,8 +44,8 @@ impl From<device::DeviceState> for OperationalState {
         match status.value {
             device::StatusValue::Error => OperationalState::Error,
             device::StatusValue::Docked => OperationalState::Docked,
-            device::StatusValue::Idle => OperationalState::Running,
-            device::StatusValue::Returning => OperationalState::Returning,
+            device::StatusValue::Idle => OperationalState::Stopped,
+            device::StatusValue::Returning => OperationalState::SeekingCharger,
             device::StatusValue::Cleaning => OperationalState::Running,
             device::StatusValue::Paused => OperationalState::Paused,
             device::StatusValue::ManualControl => OperationalState::Running,
@@ -146,24 +162,18 @@ fn build_state<P: TLVBuilderParent>(
     builder: decl::globals::OperationalStateStructBuilder<P>,
     state: OperationalState,
 ) -> Result<P, Error> {
-    // Unclear why Error and Running aren't generating as part of the enum.
-    let (id, label) = match state {
-        OperationalState::Error => (0x03, Some("Error")),
-        OperationalState::Running => (0x01, Some("Running")),
-        OperationalState::Paused => (0x02, Some("Paused")),
-        OperationalState::Returning => (
-            rvc_operational_state::OperationalStateEnum::SeekingCharger as _,
-            Some("Returning to Dock"),
-        ),
-        OperationalState::Docked => (
-            rvc_operational_state::OperationalStateEnum::Docked as _,
-            Some("Docked"),
-        ),
+    let label = match state {
+        OperationalState::Stopped => "Stopped",
+        OperationalState::Running => "Running",
+        OperationalState::Paused => "Paused",
+        OperationalState::Error => "Error",
+        OperationalState::SeekingCharger => "Returning to Dock",
+        OperationalState::Docked => "Docked",
     };
 
     builder
-        .operational_state_id(id)?
-        .operational_state_label(label)?
+        .operational_state_id(state.into())?
+        .operational_state_label(Some(label))?
         .end()
 }
 

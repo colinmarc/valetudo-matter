@@ -36,7 +36,7 @@ use smol::future;
 
 use crate::device::Device;
 use crate::generated::{
-    identify, rvc_clean_mode, rvc_operational_state, rvc_run_mode,
+    identify, rvc_clean_mode, rvc_operational_state, rvc_run_mode, service_area,
 };
 use crate::net::Netif;
 
@@ -174,6 +174,8 @@ const CLEAN_MODE_CLUSTER: Cluster<'static> =
     <Device as rvc_clean_mode::ClusterAsyncHandler>::CLUSTER;
 const OPERATIONAL_STATE_CLUSTER: Cluster<'static> =
     <Device as rvc_operational_state::ClusterAsyncHandler>::CLUSTER;
+const SERVICE_AREA_CLUSTER: Cluster<'static> =
+    <Device as service_area::ClusterAsyncHandler>::CLUSTER;
 
 const NODE: Node<'static> = Node {
     endpoints: &[
@@ -187,6 +189,7 @@ const NODE: Node<'static> = Node {
                 RUN_MODE_CLUSTER,
                 CLEAN_MODE_CLUSTER,
                 OPERATIONAL_STATE_CLUSTER,
+                SERVICE_AREA_CLUSTER,
             ),
         },
     ],
@@ -223,6 +226,10 @@ fn dm_handler<'a>(
                 .chain(
                     EpClMatcher::new(Some(1), Some(OPERATIONAL_STATE_CLUSTER.id)),
                     rvc_operational_state::HandlerAsyncAdaptor(device),
+                )
+                .chain(
+                    EpClMatcher::new(Some(1), Some(SERVICE_AREA_CLUSTER.id)),
+                    service_area::HandlerAsyncAdaptor(device),
                 ),
         ),
     )

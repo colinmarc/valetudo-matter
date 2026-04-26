@@ -1,4 +1,4 @@
-use std::time;
+use std::{cell::RefCell, time};
 
 use anyhow::{Context as _, bail};
 use enumset::EnumSet;
@@ -30,6 +30,13 @@ impl Default for DeviceState {
     }
 }
 
+#[derive(Debug, Clone, serde::Deserialize)]
+pub(crate) struct MapSegment {
+    pub(crate) id: String,
+    #[serde(default)]
+    pub(crate) name: Option<String>,
+}
+
 pub(crate) struct Device {
     pub(crate) client: ValetudoClient,
     pub(crate) capabilities: EnumSet<Capability>,
@@ -37,6 +44,8 @@ pub(crate) struct Device {
     pub(crate) current_preset: VersionedCell<Preset>,
     pub(crate) current_state: VersionedCell<DeviceState>,
     pub(crate) identify_time: VersionedCell<u16>,
+    pub(crate) segments: Vec<MapSegment>,
+    pub(crate) selected_areas: RefCell<Vec<u32>>,
 }
 
 impl Device {
@@ -72,19 +81,42 @@ impl Device {
             .await
             .context("Failed to fetch initial status")?;
         let Some(state::StateAttribute::StatusStateAttribute { value, flag }) = attributes
-            .into_iter()
+            .iter()
             .find(|attr| matches!(attr, state::StateAttribute::StatusStateAttribute { .. }))
         else {
             bail!("No status attribute in api response");
         };
 
         debug!("current state: {value:?}/{flag:?}");
-        let current_state = VersionedCell::new(DeviceState { value, flag }, &mut thread_rng());
+        let current_state = VersionedCell::new(DeviceState { value: *value, flag: *flag }, &mut thread_rng());
 
-        let default_preset = cleaning_presets
+        let current_preset_value = attributes
             .iter()
-            .next()
+            .find_map(|attr| match attr {
+                state::StateAttribute::PresetSelectionStateAttribute { r#type, value }
+                    if r#type == "operation_mode" => Some(value.as_str()),
+                _ => None,
+            });
+
+        let segments: Vec<MapSegment> =
+            if capabilities.contains(Capability::MapSegmentationCapability) {
+                debug!("fetching segments");
+                let segs = client
+                    .get("/api/v2/robot/capabilities/MapSegmentationCapability")
+                    .await
+                    .context("Failed to fetch map segments")?;
+
+                debug!("available segments: {segs:?}");
+                segs
+            } else {
+                Vec::new()
+            };
+
+        let default_preset = current_preset_value
+            .and_then(preset_from_str)
+            .or_else(|| cleaning_presets.iter().next())
             .unwrap_or(Preset::Vacuum);
+        debug!("current preset: {default_preset:?}");
 
         Ok(Self {
             client: client.clone(),
@@ -93,6 +125,8 @@ impl Device {
             current_preset: VersionedCell::new(default_preset, &mut thread_rng()),
             current_state,
             identify_time: VersionedCell::new(0, &mut thread_rng()),
+            segments,
+            selected_areas: RefCell::new(Vec::new()),
         })
     }
 
@@ -133,58 +167,86 @@ impl Device {
             .get("/api/v2/robot/state/attributes")
             .await
             .context("Failed to fetch initial status")?;
-        let Some(state::StateAttribute::StatusStateAttribute { value, flag }) = attributes
-            .into_iter()
-            .find(|attr| matches!(attr, state::StateAttribute::StatusStateAttribute { .. }))
-        else {
-            bail!("No status attribute in api response");
-        };
-
-        self.update_state(DeviceState { value, flag }, notify, run_mode_cluster, clean_mode_cluster, operational_state_cluster);
+        self.apply_attributes(&attributes, notify, run_mode_cluster, clean_mode_cluster, operational_state_cluster);
 
         let mut stream = self.client.sse("/api/v2/robot/state/attributes/sse").await?;
         while let Some(s) = stream.next().await {
             let ev: Vec<state::StateAttribute> =
                 serde_json::from_str(&s?).context("Invalid event")?;
-            let Some(state::StateAttribute::StatusStateAttribute { value, flag }) = ev
-                .into_iter()
-                .find(|attr| matches!(attr, state::StateAttribute::StatusStateAttribute { .. }))
-            else {
-                bail!("Invalid event");
-            };
 
-            self.update_state(DeviceState { value, flag }, notify, run_mode_cluster, clean_mode_cluster, operational_state_cluster);
+            self.apply_attributes(&ev, notify, run_mode_cluster, clean_mode_cluster, operational_state_cluster);
         }
 
         Ok(())
     }
 
-    fn update_state(
+    fn apply_attributes(
         &self,
-        state: DeviceState,
+        attrs: &[state::StateAttribute],
         notify: &impl AttrChangeNotifier,
         run_mode_cluster: u32,
         clean_mode_cluster: u32,
         operational_state_cluster: u32,
     ) {
-        debug!("setting state: {:?}/{:?}", state.value, state.flag);
-        let old = self.current_state.get();
-        self.current_state.set(state);
-        if state != old {
-            notify.notify_cluster_changed(1, run_mode_cluster);
-            notify.notify_cluster_changed(1, clean_mode_cluster);
-            notify.notify_cluster_changed(1, operational_state_cluster);
+        for attr in attrs {
+            match attr {
+                state::StateAttribute::StatusStateAttribute { value, flag } => {
+                    let new_state = DeviceState { value: *value, flag: *flag };
+                    debug!("setting state: {:?}/{:?}", value, flag);
+                    let old = self.current_state.get();
+                    self.current_state.set(new_state);
+                    if new_state != old {
+                        notify.notify_cluster_changed(1, run_mode_cluster);
+                        notify.notify_cluster_changed(1, operational_state_cluster);
+                    }
+                }
+                state::StateAttribute::PresetSelectionStateAttribute { r#type, value }
+                    if r#type == "operation_mode" =>
+                {
+                    if let Some(preset) = preset_from_str(value) {
+                        debug!("setting preset: {preset:?}");
+                        let old = self.current_preset.get();
+                        self.current_preset.set(preset);
+                        if preset != old {
+                            notify.notify_cluster_changed(1, clean_mode_cluster);
+                        }
+                    }
+                }
+                _ => {}
+            }
         }
     }
 
     pub(crate) async fn start_cleaning(&self) -> anyhow::Result<()> {
-        debug!("starting start command to robot");
-        self.client
-            .put(
-                "/api/v2/robot/capabilities/BasicControlCapability",
-                r#"{"action": "start"}"#.to_owned(),
-            )
-            .await
+        let selected = self.selected_areas.borrow().clone();
+        if selected.is_empty() {
+            debug!("starting full clean");
+            self.client
+                .put(
+                    "/api/v2/robot/capabilities/BasicControlCapability",
+                    r#"{"action": "start"}"#.to_owned(),
+                )
+                .await
+        } else {
+            let segment_ids: Vec<String> = selected
+                .iter()
+                .filter_map(|area_id| {
+                    self.segments
+                        .iter()
+                        .find(|s| segment_area_id(s) == Some(*area_id))
+                        .map(|s| format!(r#""{}""#, s.id))
+                })
+                .collect();
+
+            debug!("starting segment clean for segments: {segment_ids:?}");
+            let body = format!(
+                r#"{{"action": "start_segment_action", "segment_ids": [{}], "iterations": 1}}"#,
+                segment_ids.join(", "),
+            );
+            self.client
+                .put("/api/v2/robot/capabilities/MapSegmentationCapability", body)
+                .await
+        }
     }
 
     pub(crate) async fn start_mapping_pass(&self) -> anyhow::Result<()> {
@@ -228,7 +290,7 @@ impl Device {
             .await
     }
 
-    pub(crate) async fn stop(&self) -> Result<(), anyhow::Error> {
+    pub(crate) async fn stop(&self) -> anyhow::Result<()> {
         debug!("starting stop command to robot");
         self.client
             .put(
@@ -236,5 +298,20 @@ impl Device {
                 r#"{"action": "stop"}"#.to_owned(),
             )
             .await
+    }
+}
+
+/// Map a Valetudo segment to a Matter area ID by parsing the string ID.
+pub(crate) fn segment_area_id(segment: &MapSegment) -> Option<u32> {
+    segment.id.parse().ok()
+}
+
+fn preset_from_str(s: &str) -> Option<Preset> {
+    match s {
+        "vacuum" => Some(Preset::Vacuum),
+        "mop" => Some(Preset::Mop),
+        "vacuum_and_mop" => Some(Preset::VacuumAndMop),
+        "vacuum_then_mop" => Some(Preset::VacuumThenMop),
+        _ => None,
     }
 }

@@ -21,6 +21,7 @@ mod identify;
 mod rvc_clean_mode;
 mod rvc_operational_state;
 mod rvc_run_mode;
+mod service_area;
 
 use std::cell::Cell;
 

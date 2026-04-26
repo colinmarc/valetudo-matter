@@ -1,5 +1,5 @@
 pub(crate) use rs_matter::dm::clusters::decl::{
-    identify, rvc_clean_mode, rvc_operational_state, rvc_run_mode,
+    identify, rvc_clean_mode, rvc_operational_state, rvc_run_mode, service_area,
 };
 
 #[allow(dead_code)]

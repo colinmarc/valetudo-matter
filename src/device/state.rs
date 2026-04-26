@@ -6,10 +6,12 @@ use serde::{Deserialize, Serialize};
 #[serde(tag = "__class")]
 #[allow(clippy::enum_variant_names)]
 pub(crate) enum StateAttribute {
-    // These can be filled in as needed. For now we just need the StatusState.
     AttachmentStateAttribute,
     DockStatusStateAttribute,
-    PresetSelectionStateAttribute,
+    PresetSelectionStateAttribute {
+        r#type: String,
+        value: String,
+    },
     BatteryStateAttribute,
     StatusStateAttribute {
         value: StatusValue,
