@@ -1,4 +1,4 @@
-use std::str::FromStr;
+use std::{path::PathBuf, str::FromStr};
 
 use anyhow::{Context, bail};
 use log::info;
@@ -16,7 +16,7 @@ mod node;
 const DEFAULT_VALETUDO_URI: &str = "http://localhost:80";
 
 fn main() -> Result<(), anyhow::Error> {
-    env_logger::init_from_env(env_logger::Env::default());
+    env_logger::init_from_env(env_logger::Env::default().default_filter_or("valetudo_matter=info"));
 
     let ex: &'static LocalExecutor<'static> = Box::leak(Box::new(LocalExecutor::new()));
 
@@ -25,11 +25,22 @@ fn main() -> Result<(), anyhow::Error> {
 }
 
 async fn run(ex: &'static LocalExecutor<'static>) -> anyhow::Result<()> {
-    let valetudo_uri = std::env::var("VALETUDO_URI").unwrap_or(DEFAULT_VALETUDO_URI.to_owned());
+    let valetudo_uri =
+        std::env::var("VALETUDO_MATTER_BASE_URI").unwrap_or(DEFAULT_VALETUDO_URI.to_owned());
     let valetudo_uri =
         hyper::Uri::from_str(&valetudo_uri).context("Failed to parse VALETUDO_URI")?;
     if valetudo_uri.authority().is_none() {
-        bail!("Invalid VALETUDO_URI: {valetudo_uri}");
+        bail!("Invalid VALETUDO_MATTER_BASE_URI: {valetudo_uri}");
+    }
+
+    let persistence_dir = if let Ok(v) = std::env::var("VALETUDO_MATTER_PERSISTENCE") {
+        PathBuf::from(v)
+    } else {
+        std::env::temp_dir().join("valetudo-matter")
+    };
+
+    if let Some(parent) = persistence_dir.parent() {
+        std::fs::create_dir_all(parent)?;
     }
 
     info!("Connecting to {valetudo_uri}");
@@ -39,6 +50,6 @@ async fn run(ex: &'static LocalExecutor<'static>) -> anyhow::Result<()> {
     let robot: &'static Device = Box::leak(Box::new(robot));
     ex.spawn(robot.monitor_status(client.clone())).detach();
 
-    node::run(robot).await?;
+    node::run(robot, &persistence_dir).await?;
     Ok(())
 }

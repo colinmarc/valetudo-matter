@@ -1,6 +1,6 @@
 use core::pin::pin;
 
-use std::net::UdpSocket;
+use std::{net::UdpSocket, path::Path};
 
 use anyhow::Context;
 use log::debug;
@@ -15,7 +15,6 @@ use rs_matter::{
         },
         devices::test::{TEST_DEV_ATT, TEST_DEV_COMM, TEST_DEV_DET},
         endpoints,
-        networks::unix::UnixNetifs,
         subscriptions::Subscriptions,
     },
     pairing::{DiscoveryCapabilities, qr::QrTextType},
@@ -30,10 +29,13 @@ use rs_matter::{
 };
 use smol::future;
 
-use crate::generated::{identify, rvc_clean_mode, rvc_operational_state, rvc_run_mode};
 use crate::{device::Device, net::Netif};
+use crate::{
+    generated::{identify, rvc_clean_mode, rvc_operational_state, rvc_run_mode},
+    net::GetifaddrsDiag,
+};
 
-pub(crate) async fn run(device: &Device) -> anyhow::Result<()> {
+pub(crate) async fn run(device: &Device, persistence_dir: &Path) -> anyhow::Result<()> {
     let matter = Matter::new(
         &TEST_DEV_DET,
         TEST_DEV_COMM,
@@ -103,11 +105,10 @@ pub(crate) async fn run(device: &Device) -> anyhow::Result<()> {
 
     // Create, load and run the persister
     let mut psm = Psm::<8192>::new();
-    let path = std::env::temp_dir().join("rs-matter");
-    debug!("using persistence at path: {}", path.display());
-    psm.load(&path, &matter, NO_NETWORKS)?;
+    debug!("using persistence at path: {}", persistence_dir.display());
+    psm.load(persistence_dir, &matter, NO_NETWORKS)?;
 
-    let mut psm = pin!(psm.run(&path, &matter, NO_NETWORKS));
+    let mut psm = pin!(psm.run(persistence_dir, &matter, NO_NETWORKS));
 
     if !matter.is_commissioned() {
         // If the device is not commissioned yet, print the QR text and code to the console
@@ -179,7 +180,7 @@ fn dm_handler<'a>(
         NODE,
         endpoints::with_eth(
             &(),
-            &UnixNetifs,
+            &GetifaddrsDiag,
             matter.rand(),
             endpoints::with_sys(
                 &true,

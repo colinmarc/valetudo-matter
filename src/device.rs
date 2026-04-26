@@ -1,8 +1,10 @@
+use std::time;
+
 use anyhow::{Context as _, bail};
 use enumset::EnumSet;
 use log::{debug, error};
 use rs_matter::utils::rand::sys_rand;
-use smol::stream::StreamExt;
+use smol::{Timer, stream::StreamExt};
 
 mod capabilities;
 mod state;
@@ -80,7 +82,7 @@ impl Device {
         Ok(Self {
             client: client.clone(),
             capabilities,
-            cleaning_presets: cleaning_presets,
+            cleaning_presets,
             current_state,
             identify_time: VersionedCell::new(0, sys_rand),
         })
@@ -97,10 +99,28 @@ impl Device {
                 Ok(_) => debug!("GET /api/v2/robot/state/attributes/sse: stream exited"),
                 Err(e) => error!("GET /api/v2/robot/state/attributes/sse: {e:#}"),
             }
+
+            Timer::after(time::Duration::from_secs(1)).await;
         }
     }
 
     async fn monitor_status_once(&self, client: &ValetudoClient) -> anyhow::Result<()> {
+        // Poll the state once before streaming. This helps fix issues if the
+        // SSE stream dies.
+        let attributes: Vec<state::StateAttribute> = client
+            .get("/api/v2/robot/state/attributes")
+            .await
+            .context("Failed to fetch initial status")?;
+        let Some(state::StateAttribute::StatusStateAttribute { value, flag }) = attributes
+            .into_iter()
+            .find(|attr| matches!(attr, state::StateAttribute::StatusStateAttribute { .. }))
+        else {
+            bail!("No status attribute in api response");
+        };
+
+        debug!("setting state: {value:?}/{flag:?}");
+        self.current_state.set(DeviceState { value, flag });
+
         let mut stream = client.sse("/api/v2/robot/state/attributes/sse").await?;
         while let Some(s) = stream.next().await {
             let ev: Vec<state::StateAttribute> =
@@ -112,6 +132,7 @@ impl Device {
                 bail!("Invalid event");
             };
 
+            debug!("setting state: {value:?}/{flag:?}");
             self.current_state.set(DeviceState { value, flag });
         }
 
@@ -119,6 +140,7 @@ impl Device {
     }
 
     pub(crate) async fn start_cleaning(&self) -> anyhow::Result<()> {
+        debug!("starting start command to robot");
         self.client
             .put(
                 "/api/v2/robot/capabilities/BasicControlCapability",
@@ -132,25 +154,17 @@ impl Device {
     }
 
     pub(crate) async fn pause(&self) -> anyhow::Result<()> {
+        debug!("starting pause command to robot");
         self.client
             .put(
                 "/api/v2/robot/capabilities/BasicControlCapability",
-                r#"{"action": "start"}"#.to_owned(),
-            )
-            .await
-    }
-
-    pub(crate) async fn resume(&self) -> anyhow::Result<()> {
-        // todo
-        self.client
-            .put(
-                "/api/v2/robot/capabilities/BasicControlCapability",
-                r#"{"action": "start"}"#.to_owned(),
+                r#"{"action": "pause"}"#.to_owned(),
             )
             .await
     }
 
     pub(crate) async fn go_home(&self) -> anyhow::Result<()> {
+        debug!("starting home command to robot");
         self.client
             .put(
                 "/api/v2/robot/capabilities/BasicControlCapability",
@@ -160,6 +174,7 @@ impl Device {
     }
 
     pub(crate) async fn stop(&self) -> Result<(), anyhow::Error> {
+        debug!("starting stop command to robot");
         self.client
             .put(
                 "/api/v2/robot/capabilities/BasicControlCapability",

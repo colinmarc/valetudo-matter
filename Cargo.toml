@@ -5,30 +5,33 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1"
+async-compression = { version = "0.4", features = ["futures-io", "gzip"] }
+bstr = "1"
 chrono = { version = "0.4", features = ["serde"] }
-env_logger = "0.11"
-hyper = { version = "1.8", features = ["http1", "client"] }
-http-body-util = "0.1"
-log = "0.4"
-smol = "2"
-socket2 = { version = "0.6", features = ["all"] }
-smol-hyper = "0.1"
-serde_json = "1"
-serde = { version = "1", features = ["derive"] }
 # Needed to avoid a linker error.
-embassy-time = { version = "0.5", features = ["generic-queue-64"] }
-regress = "0.10.5"
-smol-macros = "0.1.1"
-macro_rules_attribute = "0.2.2"
-enumset = { version = "1.1.10", features = ["serde"] }
-getifaddrs = "0.6.0"
-enum-iterator = "2.3.0"
-num_enum = "0.7.5"
+embassy-time = { version = "*", features = ["generic-queue-64"] }
+enum-iterator = "2"
+enumset = { version = "1", features = ["serde"] }
+env_logger = "0.11"
+futures = "0.3"
+getifaddrs = "0.6"
+http-body-util = "0.1"
+hyper = { version = "1.8", features = ["http1", "client"] }
+log = "0.4"
+macro_rules_attribute = "0.2"
+num_enum = "0.7"
+regress = "0.10"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+smol = "2"
+smol-hyper = "0.1"
+smol-macros = "0.1"
+socket2 = { version = "0.6", features = ["all"] }
 
 [dependencies.rs-matter]
-git = "https://github.com/project-chip/rs-matter"
-rev = "34158e8dd451fe653b946f579aa1f1df19136b40"
-features = ["std", "async-io"]
+git = "https://github.com/colinmarc/rs-matter"
+rev = "968f504e910f0e91f87f0901a47590ca68872d01"
+features = ["os", "async-io"]
 
 [build-dependencies]
 anyhow = "1"

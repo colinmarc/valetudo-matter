@@ -127,7 +127,7 @@ impl rvc_operational_state::ClusterAsyncHandler for Device {
         _ctx: impl rs_matter::dm::InvokeContext,
         response: rvc_operational_state::OperationalCommandResponseBuilder<P>,
     ) -> Result<P, rs_matter::error::Error> {
-        self.resume().await.map_err(to_matter_err)?;
+        self.start_cleaning().await.map_err(to_matter_err)?;
         build_ok(response.command_response_state()?)?.end()
     }
 
