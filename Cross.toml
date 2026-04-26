@@ -1,0 +1,12 @@
+[target.aarch64-unknown-linux-musl]
+pre-build = [
+    "dpkg --add-architecture arm64",
+    "apt-get update",
+    "apt-get install -y libdbus-1-dev:arm64 pkg-config",
+]
+
+[target.aarch64-unknown-linux-musl.env]
+passthrough = [
+    "PKG_CONFIG_SYSROOT_DIR=/usr/aarch64-linux-musl",
+    "PKG_CONFIG_ALLOW_CROSS=1",
+]

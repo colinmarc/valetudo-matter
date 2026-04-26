@@ -31,8 +31,8 @@ socket2 = { version = "0.6", features = ["all"] }
 rand = "0.8"
 
 [dependencies.rs-matter]
-git = "https://github.com/project-chip/rs-matter"
-rev = "b270c49"
+git = "https://github.com/colinmarc/rs-matter"
+rev = "0cbf868"
 features = ["os", "async-io"]
 
 [build-dependencies]
