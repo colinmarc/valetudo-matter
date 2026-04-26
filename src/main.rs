@@ -48,8 +48,6 @@ async fn run(ex: &'static LocalExecutor<'static>) -> anyhow::Result<()> {
     let robot = Device::init(client.clone()).await?;
 
     let robot: &'static Device = Box::leak(Box::new(robot));
-    ex.spawn(robot.monitor_status(client.clone())).detach();
-
     node::run(robot, &persistence_dir).await?;
     Ok(())
 }

@@ -129,20 +129,33 @@ pub(crate) async fn run(
     }
 
     let mut dm = pin!(dm.run());
-    let fut = try_zip4(&mut transport, &mut mdns, &mut respond, &mut dm);
+    let mut monitor = pin!(async {
+        device.monitor_status(
+            &subscriptions,
+            RUN_MODE_CLUSTER.id,
+            OPERATIONAL_STATE_CLUSTER.id,
+        ).await;
+        Ok::<(), rs_matter::error::Error>(())
+    });
+
+    let fut = try_zip5(
+        &mut transport, &mut mdns, &mut respond, &mut dm, &mut monitor,
+    );
     Ok(fut.await?)
 }
 
-async fn try_zip4<E>(
+async fn try_zip5<E>(
     f1: impl Future<Output = Result<(), E>>,
     f2: impl Future<Output = Result<(), E>>,
     f3: impl Future<Output = Result<(), E>>,
     f4: impl Future<Output = Result<(), E>>,
+    f5: impl Future<Output = Result<(), E>>,
 ) -> Result<(), E> {
     #[rustfmt::skip]
     future::try_zip(f1,
         future::try_zip(f2,
-            future::try_zip(f3, f4)),
+            future::try_zip(f3,
+                future::try_zip(f4, f5))),
     )
     .await?;
 

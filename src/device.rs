@@ -4,6 +4,7 @@ use anyhow::{Context as _, bail};
 use enumset::EnumSet;
 use log::{debug, error};
 use rand::thread_rng;
+use rs_matter::dm::AttrChangeNotifier;
 use smol::{Timer, stream::StreamExt};
 
 mod capabilities;
@@ -88,11 +89,17 @@ impl Device {
         })
     }
 
-    /// A background worker updating the device state in response to SSE events.
-    pub(crate) async fn monitor_status(&self, client: ValetudoClient) {
+    /// A background worker updating the device state in response to SSE
+    /// events. Notifies Matter subscriptions when state changes.
+    pub(crate) async fn monitor_status(
+        &self,
+        notify: &impl AttrChangeNotifier,
+        run_mode_cluster: u32,
+        operational_state_cluster: u32,
+    ) {
         loop {
             match self
-                .monitor_status_once(&client)
+                .monitor_status_once(notify, run_mode_cluster, operational_state_cluster)
                 .await
                 .context("Stream error")
             {
@@ -104,10 +111,16 @@ impl Device {
         }
     }
 
-    async fn monitor_status_once(&self, client: &ValetudoClient) -> anyhow::Result<()> {
+    async fn monitor_status_once(
+        &self,
+        notify: &impl AttrChangeNotifier,
+        run_mode_cluster: u32,
+        operational_state_cluster: u32,
+    ) -> anyhow::Result<()> {
         // Poll the state once before streaming. This helps fix issues if the
         // SSE stream dies.
-        let attributes: Vec<state::StateAttribute> = client
+        let attributes: Vec<state::StateAttribute> = self
+            .client
             .get("/api/v2/robot/state/attributes")
             .await
             .context("Failed to fetch initial status")?;
@@ -118,10 +131,9 @@ impl Device {
             bail!("No status attribute in api response");
         };
 
-        debug!("setting state: {value:?}/{flag:?}");
-        self.current_state.set(DeviceState { value, flag });
+        self.update_state(DeviceState { value, flag }, notify, run_mode_cluster, operational_state_cluster);
 
-        let mut stream = client.sse("/api/v2/robot/state/attributes/sse").await?;
+        let mut stream = self.client.sse("/api/v2/robot/state/attributes/sse").await?;
         while let Some(s) = stream.next().await {
             let ev: Vec<state::StateAttribute> =
                 serde_json::from_str(&s?).context("Invalid event")?;
@@ -132,11 +144,26 @@ impl Device {
                 bail!("Invalid event");
             };
 
-            debug!("setting state: {value:?}/{flag:?}");
-            self.current_state.set(DeviceState { value, flag });
+            self.update_state(DeviceState { value, flag }, notify, run_mode_cluster, operational_state_cluster);
         }
 
         Ok(())
+    }
+
+    fn update_state(
+        &self,
+        state: DeviceState,
+        notify: &impl AttrChangeNotifier,
+        run_mode_cluster: u32,
+        operational_state_cluster: u32,
+    ) {
+        debug!("setting state: {:?}/{:?}", state.value, state.flag);
+        let old = self.current_state.get();
+        self.current_state.set(state);
+        if state != old {
+            notify.notify_cluster_changed(1, run_mode_cluster);
+            notify.notify_cluster_changed(1, operational_state_cluster);
+        }
     }
 
     pub(crate) async fn start_cleaning(&self) -> anyhow::Result<()> {
