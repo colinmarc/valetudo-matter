@@ -33,7 +33,8 @@ impl Default for DeviceState {
 pub(crate) struct Device {
     pub(crate) client: ValetudoClient,
     pub(crate) capabilities: EnumSet<Capability>,
-    pub(crate) cleaning_presets: Option<EnumSet<Preset>>,
+    pub(crate) cleaning_presets: EnumSet<Preset>,
+    pub(crate) current_preset: VersionedCell<Preset>,
     pub(crate) current_state: VersionedCell<DeviceState>,
     pub(crate) identify_time: VersionedCell<u16>,
 }
@@ -51,19 +52,19 @@ impl Device {
             bail!("Device requires at least BasicControlCapability");
         }
 
-        let cleaning_presets = if capabilities.contains(Capability::OperationModeControlCapability)
-        {
-            debug!("fetching presets");
-            let presets = client
-                .get("/api/v2/robot/capabilities/OperationModeControlCapability/presets")
-                .await
-                .context("Failed to fetch cleaning mode presets")?;
+        let cleaning_presets: EnumSet<Preset> =
+            if capabilities.contains(Capability::OperationModeControlCapability) {
+                debug!("fetching presets");
+                let presets = client
+                    .get("/api/v2/robot/capabilities/OperationModeControlCapability/presets")
+                    .await
+                    .context("Failed to fetch cleaning mode presets")?;
 
-            debug!("available presets: {presets:?}");
-            Some(presets)
-        } else {
-            None
-        };
+                debug!("available presets: {presets:?}");
+                presets
+            } else {
+                EnumSet::empty()
+            };
 
         debug!("fetching status");
         let attributes: Vec<state::StateAttribute> = client
@@ -80,10 +81,16 @@ impl Device {
         debug!("current state: {value:?}/{flag:?}");
         let current_state = VersionedCell::new(DeviceState { value, flag }, &mut thread_rng());
 
+        let default_preset = cleaning_presets
+            .iter()
+            .next()
+            .unwrap_or(Preset::Vacuum);
+
         Ok(Self {
             client: client.clone(),
             capabilities,
             cleaning_presets,
+            current_preset: VersionedCell::new(default_preset, &mut thread_rng()),
             current_state,
             identify_time: VersionedCell::new(0, &mut thread_rng()),
         })
@@ -95,11 +102,12 @@ impl Device {
         &self,
         notify: &impl AttrChangeNotifier,
         run_mode_cluster: u32,
+        clean_mode_cluster: u32,
         operational_state_cluster: u32,
     ) {
         loop {
             match self
-                .monitor_status_once(notify, run_mode_cluster, operational_state_cluster)
+                .monitor_status_once(notify, run_mode_cluster, clean_mode_cluster, operational_state_cluster)
                 .await
                 .context("Stream error")
             {
@@ -115,6 +123,7 @@ impl Device {
         &self,
         notify: &impl AttrChangeNotifier,
         run_mode_cluster: u32,
+        clean_mode_cluster: u32,
         operational_state_cluster: u32,
     ) -> anyhow::Result<()> {
         // Poll the state once before streaming. This helps fix issues if the
@@ -131,7 +140,7 @@ impl Device {
             bail!("No status attribute in api response");
         };
 
-        self.update_state(DeviceState { value, flag }, notify, run_mode_cluster, operational_state_cluster);
+        self.update_state(DeviceState { value, flag }, notify, run_mode_cluster, clean_mode_cluster, operational_state_cluster);
 
         let mut stream = self.client.sse("/api/v2/robot/state/attributes/sse").await?;
         while let Some(s) = stream.next().await {
@@ -144,7 +153,7 @@ impl Device {
                 bail!("Invalid event");
             };
 
-            self.update_state(DeviceState { value, flag }, notify, run_mode_cluster, operational_state_cluster);
+            self.update_state(DeviceState { value, flag }, notify, run_mode_cluster, clean_mode_cluster, operational_state_cluster);
         }
 
         Ok(())
@@ -155,6 +164,7 @@ impl Device {
         state: DeviceState,
         notify: &impl AttrChangeNotifier,
         run_mode_cluster: u32,
+        clean_mode_cluster: u32,
         operational_state_cluster: u32,
     ) {
         debug!("setting state: {:?}/{:?}", state.value, state.flag);
@@ -162,6 +172,7 @@ impl Device {
         self.current_state.set(state);
         if state != old {
             notify.notify_cluster_changed(1, run_mode_cluster);
+            notify.notify_cluster_changed(1, clean_mode_cluster);
             notify.notify_cluster_changed(1, operational_state_cluster);
         }
     }
@@ -196,6 +207,23 @@ impl Device {
             .put(
                 "/api/v2/robot/capabilities/BasicControlCapability",
                 r#"{"action": "home"}"#.to_owned(),
+            )
+            .await
+    }
+
+    pub(crate) async fn set_preset(&self, preset: Preset) -> anyhow::Result<()> {
+        let name = match preset {
+            Preset::Vacuum => "vacuum",
+            Preset::Mop => "mop",
+            Preset::VacuumAndMop => "vacuum_and_mop",
+            Preset::VacuumThenMop => "vacuum_then_mop",
+        };
+
+        debug!("setting operation mode preset to {name}");
+        self.client
+            .put(
+                "/api/v2/robot/capabilities/OperationModeControlCapability/preset",
+                format!(r#"{{"name": "{name}"}}"#),
             )
             .await
     }

@@ -133,6 +133,7 @@ pub(crate) async fn run(
         device.monitor_status(
             &subscriptions,
             RUN_MODE_CLUSTER.id,
+            CLEAN_MODE_CLUSTER.id,
             OPERATIONAL_STATE_CLUSTER.id,
         ).await;
         Ok::<(), rs_matter::error::Error>(())
@@ -184,7 +185,7 @@ const NODE: Node<'static> = Node {
                 desc::DescHandler::CLUSTER,
                 IDENTIFY_CLUSTER,
                 RUN_MODE_CLUSTER,
-                // CLEAN_MODE_CLUSTER,
+                CLEAN_MODE_CLUSTER,
                 OPERATIONAL_STATE_CLUSTER,
             ),
         },
@@ -215,10 +216,10 @@ fn dm_handler<'a>(
                     EpClMatcher::new(Some(1), Some(RUN_MODE_CLUSTER.id)),
                     rvc_run_mode::HandlerAsyncAdaptor(device),
                 )
-                // .chain(
-                //     EpClMatcher::new(Some(1), Some(CLEAN_MODE_CLUSTER.id)),
-                //     rvc_clean_mode::HandlerAsyncAdaptor(&device),
-                // )
+                .chain(
+                    EpClMatcher::new(Some(1), Some(CLEAN_MODE_CLUSTER.id)),
+                    rvc_clean_mode::HandlerAsyncAdaptor(device),
+                )
                 .chain(
                     EpClMatcher::new(Some(1), Some(OPERATIONAL_STATE_CLUSTER.id)),
                     rvc_operational_state::HandlerAsyncAdaptor(device),
