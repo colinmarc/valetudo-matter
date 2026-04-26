@@ -1,2 +1,4 @@
 [tools]
 rust = "1.92.0"
+pinact = "3.9.0"
+zizmor = "1.23.1"
