@@ -1,4 +1,4 @@
-# valetudo-matter
+# Valetudo Matter Bridge
 
 
 <p align="center">
@@ -25,8 +25,8 @@ Download the correct release for your platform to the robot. Then add something 
 
 ```sh
 if [[ -f /data/valetudo-matter ]]; then
-        sleep 30
-	VALETUDO_MATTER_BASE_URI=http://localhost VALETUDO_MATTER_PERSISTENCE=/data/matter \ 
+    sleep 30
+    VALETUDO_MATTER_BASE_URI=http://localhost VALETUDO_MATTER_PERSISTENCE=/data/matter \ 
 	    /data/valetudo-matter > /dev/null 2>&1 &
 fi
 ```
