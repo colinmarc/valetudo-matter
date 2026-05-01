@@ -33,27 +33,28 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   build:
-    name: Build ${{ matrix.target }}
-    runs-on: ubuntu-latest
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
     needs: release-plz-release
     if: ${{ needs.release-plz-release.outputs.releases_created == 'true' }}
     permissions:
       contents: write
     strategy:
+      fail-fast: false
       matrix:
-        target:
-          - x86_64-unknown-linux-musl
-          - aarch64-unknown-linux-musl
+        include:
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           ref: ${{ needs.release-plz-release.outputs.tag }}
           persist-credentials: false
       - uses: jdx/mise-action@c37c93293d6b742fc901e1406b8f764f6fb19dac # v2.4.4
-        with:
-          install_args: "zig cargo:cargo-zigbuild"
       - run: rustup target add ${{ matrix.target }}
-      - run: cargo zigbuild --release --target ${{ matrix.target }}
+      - run: cargo build --release --target ${{ matrix.target }}
       - name: Upload binary to release
         run: |
           tar -C "target/${TARGET}/release" \
