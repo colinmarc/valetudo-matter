@@ -93,11 +93,7 @@ impl service_area::ClusterAsyncHandler for Device {
         request: service_area::SelectAreasRequest<'_>,
         response: service_area::SelectAreasResponseBuilder<P>,
     ) -> Result<P, Error> {
-        let valid_ids: Vec<u32> = self
-            .segments
-            .iter()
-            .filter_map(|s| segment_area_id(s))
-            .collect();
+        let valid_ids: Vec<u32> = self.segments.iter().filter_map(segment_area_id).collect();
 
         let mut new_areas = Vec::new();
         for area_id in request.new_areas()? {
