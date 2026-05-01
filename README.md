@@ -1,16 +1,17 @@
 # valetudo-matter
 
-A [Matter](https://csa-iot.org/all-solutions/matter/) bridge for
-[Valetudo](https://valetudo.cloud/)-controlled robot vacuums. Runs on the robot next to valetudo.
-
-> [!NOTE]
-> I'm not affiliated with Valetudo and this is not an official extension; please ask for support here, not there.
 
 <p align="center">
   <img src="doc/screenshot-cleaning.png" width="300" alt="Cleaning controls in Apple Home" />
   &nbsp;&nbsp;&nbsp;&nbsp;
   <img src="doc/screenshot-settings.png" width="300" alt="Device settings and automations" />
 </p>
+
+A [Matter](https://csa-iot.org/all-solutions/matter/) bridge for
+[Valetudo](https://valetudo.cloud/)-controlled robot vacuums. Runs on the robot as a separate process alongside valetudo.
+
+> [!NOTE]
+> I'm not affiliated with Valetudo and this is not an official extension; please ask for support here, not there.
 
 ## Supported features
 
