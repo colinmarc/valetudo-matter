@@ -2,6 +2,7 @@
 name = "valetudo-matter"
 version = "0.1.0"
 edition = "2024"
+publish = false
 
 [dependencies]
 anyhow = "1"
@@ -31,10 +32,11 @@ socket2 = { version = "0.6", features = ["all"] }
 rand = "0.8"
 
 [dependencies.rs-matter]
-version = "0.1.1"
-git = "https://github.com/colinmarc/rs-matter"
-rev = "0cbf868"
+version = "0.1"
 features = ["os", "async-io"]
+
+[patch.crates-io]
+rs-matter = { git = "https://github.com/colinmarc/rs-matter", rev = "0cbf868" }
 
 [build-dependencies]
 anyhow = "1"
