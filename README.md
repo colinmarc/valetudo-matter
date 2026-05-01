@@ -21,9 +21,9 @@ A [Matter](https://csa-iot.org/all-solutions/matter/) bridge for
 
 ## Installation
 
-Download the correct release for your platform to the robot. Then add something like the following to `data/_root_postboot.sh` after Valetudo starts:
+Download the correct release for your platform to the robot. Then add something like the following to `/data/_root_postboot.sh` after Valetudo starts:
 
-```sh
+```bash
 if [[ -f /data/valetudo-matter ]]; then
     sleep 30
     VALETUDO_MATTER_BASE_URI=http://localhost VALETUDO_MATTER_PERSISTENCE=/data/matter \ 
@@ -31,7 +31,7 @@ if [[ -f /data/valetudo-matter ]]; then
 fi
 ```
 
-In order to get the commissioning code, run the tool once with debug logging:
+In order to get the commissioning code, run the tool once with logging enabled:
 
 ```sh
 RUST_LOG=info /data/valetudo-matter
