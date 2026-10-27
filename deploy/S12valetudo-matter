@@ -1,0 +1,21 @@
+#!/bin/sh
+PIDFILE=/var/run/valetudo-matter-supervisor.pid
+running() {
+    [ -r "$PIDFILE" ] || return 1
+    pid=$(cat "$PIDFILE")
+    case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+    [ -r "/proc/$pid/cmdline" ] || return 1
+    tr '\000' ' ' < "/proc/$pid/cmdline" | grep -Fq '/mnt/data/valetudo-matter/run.sh'
+}
+case "$1" in
+    start)
+        # BusyBox -x cannot match the interpreter of a shell script reliably.
+        running && exit 0
+        /sbin/start-stop-daemon -S -b -q -m -p "$PIDFILE" -x /mnt/data/valetudo-matter/run.sh
+        ;;
+    stop)
+        running || exit 0
+        /sbin/start-stop-daemon -K -q -p "$PIDFILE"
+        ;;
+    *) echo "Usage: $0 start|stop"; exit 1 ;;
+esac

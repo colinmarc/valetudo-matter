@@ -1,1 +1,7 @@
-target
+/target/
+# Runtime state and credentials never belong in source control.
+/persistence/
+/corpus/
+*.pem
+id_rsa*
+.env

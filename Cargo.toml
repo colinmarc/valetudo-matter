@@ -19,6 +19,7 @@ getifaddrs = "0.6"
 http-body-util = "0.1"
 hyper = { version = "1.8", features = ["http1", "client"] }
 log = "0.4"
+libc = "0.2"
 macro_rules_attribute = "0.2"
 num_enum = "0.7"
 regress = "0.10"

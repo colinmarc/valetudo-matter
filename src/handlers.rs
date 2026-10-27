@@ -9,13 +9,11 @@
 //!  - Pause/resume are performed on the "operational state" cluster.
 //!  - Any change to the robot state (external or triggered via matter) causes
 //!    the `operational_state` to change.
-//!  - If the robot becomes stopped/paused/docked/charging/error, the `current_run_mode`
-//!    should change to idle.
-//!  - If the robot starts cleaning or mapping, the `current_run_mode` should
-//!    change to cleaning or mapping, respectively.
-//!  - If the robot hits an error, the `current_run_mode` should be idle and the
-//!    `operational_state` should be "error". We should also return anything
-//!    useful from `operational_error`.
+//!  - Run mode tracks the operation cycle across pause, recoverable error and
+//!    resumable recharging. Operational state describes the immediate activity.
+//!  - A non-resumable terminal status ends a previously observed cycle; an idle
+//!    snapshot before an accepted start becomes active does not prove completion.
+//!  - Error details and completion transitions are emitted as RVC events.
 
 mod identify;
 mod rvc_clean_mode;
@@ -75,16 +73,6 @@ impl<T: Copy + PartialEq> VersionedCell<T> {
         let old_value = self.inner.replace(value);
         if value != old_value {
             self.dataver.changed();
-        }
-
-        old_value
-    }
-
-    pub(crate) fn replace_notify(&self, value: T, ctx: &impl OperationContext) -> T {
-        let old_value = self.replace(value);
-        if old_value != value {
-            self.dataver.changed();
-            ctx.notify_own_cluster_changed();
         }
 
         old_value

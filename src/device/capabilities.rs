@@ -50,4 +50,6 @@ pub enum Capability {
     WifiConfigurationCapability,
     WifiScanCapability,
     ZoneCleaningCapability,
+    #[serde(other)]
+    Unknown,
 }

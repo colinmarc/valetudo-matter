@@ -2691,6 +2691,7 @@ dependencies = [
  "getifaddrs",
  "http-body-util",
  "hyper",
+ "libc",
  "log",
  "macro_rules_attribute",
  "num_enum",

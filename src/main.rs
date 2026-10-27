@@ -1,4 +1,4 @@
-use std::{path::PathBuf, str::FromStr};
+use std::str::FromStr;
 
 use anyhow::{Context, bail};
 use log::info;
@@ -7,11 +7,18 @@ use smol::LocalExecutor;
 use crate::{device::Device, http::ValetudoClient};
 
 mod device;
+mod general_diagnostics;
 mod generated;
 mod handlers;
 mod http;
+mod identity;
+mod matter_audit;
 mod net;
 mod node;
+mod node_lifetime;
+mod persistence_path;
+mod power_source;
+mod wifi_diagnostics;
 
 const DEFAULT_VALETUDO_URI: &str = "http://localhost:80";
 
@@ -33,11 +40,17 @@ async fn run(ex: &'static LocalExecutor<'static>) -> anyhow::Result<()> {
         bail!("Invalid VALETUDO_MATTER_BASE_URI: {valetudo_uri}");
     }
 
-    let persistence_dir = if let Ok(v) = std::env::var("VALETUDO_MATTER_PERSISTENCE") {
-        PathBuf::from(v)
-    } else {
-        std::env::temp_dir().join("valetudo-matter")
-    };
+    // Read-only support report: no Matter node, persistence or commissioning.
+    if std::env::args().nth(1).as_deref() == Some("--diagnostics") {
+        let client = ValetudoClient::new(ex, valetudo_uri);
+        let native = std::env::var("VALETUDO_MATTER_NATIVE_DIAGNOSTICS").as_deref() == Ok("1");
+        let identity = identity::Identity::load(&client, native).await?;
+        println!("{}", serde_json::to_string_pretty(identity.diagnostics())?);
+        return Ok(());
+    }
+
+    let persistence_dir = persistence_path::resolve()?;
+    info!("Matter state directory: {}", persistence_dir.display());
 
     if let Some(parent) = persistence_dir.parent() {
         std::fs::create_dir_all(parent)?;
